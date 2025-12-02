@@ -1,28 +1,57 @@
 // VETRA Depth Recorder - Capture Screen
-// Main capture interface with camera preview and frame controls
+// Real camera capture with sensor-based pose tracking
 
-import React, { useState, useCallback } from 'react';
-import { View, StyleSheet, Pressable } from 'react-native';
-import { Text, Chip, Snackbar, Icon, IconButton } from 'react-native-paper';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, Pressable, Platform, ActivityIndicator } from 'react-native';
+import { Text, Chip, Snackbar, Icon } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSession } from '../src/context/SessionContext';
 import { ViewLabel, VIEW_LABEL_OPTIONS } from '../src/models/FrameCapture';
 import { AppColors, AppSpacing, AppBorderRadius, AppShadow } from '../src/theme/appTheme';
 
 export default function CaptureScreen() {
   const router = useRouter();
-  const { currentSession, addFrame, getFrameCount } = useSession();
+  const {
+    currentSession,
+    captureFrame,
+    getFrameCount,
+    isCapturing,
+    cameraRef,
+  } = useSession();
   
+  const [permission, requestPermission] = useCameraPermissions();
   const [selectedView, setSelectedView] = useState<ViewLabel>('front');
   const [snackbarVisible, setSnackbarVisible] = useState(false);
-  const [lastCapturedView, setLastCapturedView] = useState<string>('');
+  const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [lastCaptureSuccess, setLastCaptureSuccess] = useState(true);
+  const [cameraReady, setCameraReady] = useState(false);
 
-  const handleCapture = useCallback(() => {
-    addFrame(selectedView);
-    setLastCapturedView(VIEW_LABEL_OPTIONS.find(v => v.value === selectedView)?.label || selectedView);
-    setSnackbarVisible(true);
-  }, [selectedView, addFrame, setLastCapturedView, setSnackbarVisible]);
+  useEffect(() => {
+    if (!permission?.granted) {
+      requestPermission();
+    }
+  }, [permission, requestPermission]);
+
+  const handleCapture = useCallback(async () => {
+    if (isCapturing) return;
+
+    const frame = await captureFrame(selectedView);
+    
+    if (frame) {
+      const viewName = VIEW_LABEL_OPTIONS.find(v => v.value === selectedView)?.label || selectedView;
+      const isReal = !frame.isMock;
+      
+      setLastCaptureSuccess(isReal);
+      setSnackbarMessage(
+        isReal
+          ? `Frame captured: ${viewName} (${frame.id})`
+          : `Mock frame captured: ${viewName}`
+      );
+      setSnackbarVisible(true);
+    }
+  }, [selectedView, captureFrame, isCapturing]);
 
   const handleViewSession = () => {
     router.push('/session-summary');
@@ -30,34 +59,92 @@ export default function CaptureScreen() {
 
   const frameCount = getFrameCount();
 
-  return (
-    <SafeAreaView style={styles.container} edges={['bottom']}>
-      {/* Camera Preview Area */}
-      <View style={styles.cameraContainer}>
-        <View style={styles.cameraPreview}>
-          <Icon source="camera-off" size={64} color={AppColors.placeholder} />
-          <Text style={styles.cameraPlaceholderText}>Camera preview here</Text>
-          <Text style={styles.cameraPlaceholderSubtext}>
-            ARCore integration coming in future update
+  // Permission loading
+  if (!permission) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <View style={styles.permissionContainer}>
+          <ActivityIndicator size="large" color={AppColors.primary} />
+          <Text style={styles.permissionText}>Loading camera...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Permission denied
+  if (!permission.granted) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <View style={styles.permissionContainer}>
+          <Icon source="camera-off" size={64} color={AppColors.error} />
+          <Text style={styles.permissionTitle}>Camera Permission Required</Text>
+          <Text style={styles.permissionText}>
+            VETRA needs camera access to capture frames for 3D reconstruction.
           </Text>
-        </View>
-        
-        {/* Overlay Info */}
-        <View style={styles.overlayTopLeft}>
-          <View style={styles.sessionBadge}>
-            <Icon source="identifier" size={16} color={AppColors.onPrimary} />
-            <Text style={styles.sessionBadgeText}>
-              {currentSession?.animalId || 'No ID'}
-            </Text>
-          </View>
-        </View>
-        
-        <View style={styles.overlayTopRight}>
-          <Pressable style={styles.summaryButton} onPress={handleViewSession}>
-            <Icon source="format-list-bulleted" size={20} color={AppColors.surface} />
-            <Text style={styles.summaryButtonText}>Summary</Text>
+          <Pressable style={styles.permissionButton} onPress={requestPermission}>
+            <Text style={styles.permissionButtonText}>Grant Permission</Text>
           </Pressable>
         </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={['bottom']}>
+      {/* Camera Preview */}
+      <View style={styles.cameraContainer}>
+        <CameraView
+          ref={cameraRef}
+          style={styles.camera}
+          facing="back"
+          onCameraReady={() => setCameraReady(true)}
+        >
+          {/* Camera Overlay */}
+          <View style={styles.cameraOverlay}>
+            {/* Top Left - Session Badge */}
+            <View style={styles.overlayTopLeft}>
+              <View style={styles.sessionBadge}>
+                <Icon source="identifier" size={16} color={AppColors.onPrimary} />
+                <Text style={styles.sessionBadgeText}>
+                  {currentSession?.animalId || 'No ID'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Top Right - Summary Button */}
+            <View style={styles.overlayTopRight}>
+              <Pressable style={styles.summaryButton} onPress={handleViewSession}>
+                <Icon source="format-list-bulleted" size={20} color={AppColors.surface} />
+                <Text style={styles.summaryButtonText}>Summary</Text>
+              </Pressable>
+            </View>
+
+            {/* Center - Guide Frame */}
+            <View style={styles.guideFrame}>
+              <View style={[styles.guideCorner, styles.guideTopLeft]} />
+              <View style={[styles.guideCorner, styles.guideTopRight]} />
+              <View style={[styles.guideCorner, styles.guideBottomLeft]} />
+              <View style={[styles.guideCorner, styles.guideBottomRight]} />
+            </View>
+
+            {/* Bottom Center - View Label */}
+            <View style={styles.overlayBottom}>
+              <View style={styles.currentViewBadge}>
+                <Text style={styles.currentViewText}>
+                  {VIEW_LABEL_OPTIONS.find(v => v.value === selectedView)?.label}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </CameraView>
+
+        {/* Camera not ready overlay */}
+        {!cameraReady && (
+          <View style={styles.cameraLoading}>
+            <ActivityIndicator size="large" color={AppColors.primary} />
+            <Text style={styles.cameraLoadingText}>Initializing camera...</Text>
+          </View>
+        )}
       </View>
 
       {/* Controls Section */}
@@ -80,6 +167,17 @@ export default function CaptureScreen() {
                   selectedView === option.value && styles.viewChipTextSelected,
                 ]}
                 showSelectedCheck={false}
+                icon={() => (
+                  <Icon
+                    source={option.icon}
+                    size={16}
+                    color={
+                      selectedView === option.value
+                        ? AppColors.onPrimary
+                        : AppColors.onSurface
+                    }
+                  />
+                )}
               >
                 {option.label}
               </Chip>
@@ -95,21 +193,29 @@ export default function CaptureScreen() {
               Frames captured: <Text style={styles.frameCountNumber}>{frameCount}</Text>
             </Text>
           </View>
-          
+
           <Pressable
             style={({ pressed }) => [
               styles.captureButton,
               pressed && styles.captureButtonPressed,
+              isCapturing && styles.captureButtonDisabled,
             ]}
             onPress={handleCapture}
+            disabled={isCapturing || !cameraReady}
           >
-            <View style={styles.captureButtonInner}>
-              <Icon source="camera" size={32} color={AppColors.surface} />
-            </View>
+            {isCapturing ? (
+              <ActivityIndicator size="large" color={AppColors.surface} />
+            ) : (
+              <View style={styles.captureButtonInner}>
+                <Icon source="camera" size={32} color={AppColors.surface} />
+              </View>
+            )}
           </Pressable>
-          
+
           <Text style={styles.captureHint}>
-            Tap to capture {VIEW_LABEL_OPTIONS.find(v => v.value === selectedView)?.label} view
+            {isCapturing
+              ? 'Capturing...'
+              : `Tap to capture ${VIEW_LABEL_OPTIONS.find(v => v.value === selectedView)?.label} view`}
           </Text>
         </View>
       </View>
@@ -118,14 +224,17 @@ export default function CaptureScreen() {
       <Snackbar
         visible={snackbarVisible}
         onDismiss={() => setSnackbarVisible(false)}
-        duration={2000}
-        style={styles.snackbar}
+        duration={2500}
+        style={[
+          styles.snackbar,
+          { backgroundColor: lastCaptureSuccess ? AppColors.primaryDark : AppColors.warning },
+        ]}
         action={{
           label: 'View',
           onPress: handleViewSession,
         }}
       >
-        Frame captured (mock) - {lastCapturedView}
+        {snackbarMessage}
       </Snackbar>
     </SafeAreaView>
   );
@@ -138,25 +247,26 @@ const styles = StyleSheet.create({
   },
   cameraContainer: {
     flex: 1,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#000',
     position: 'relative',
   },
-  cameraPreview: {
+  camera: {
     flex: 1,
+  },
+  cameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'space-between',
+  },
+  cameraLoading: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.8)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#2a2a2a',
   },
-  cameraPlaceholderText: {
-    color: AppColors.placeholder,
-    fontSize: 18,
-    fontWeight: '500',
+  cameraLoadingText: {
+    color: AppColors.surface,
     marginTop: AppSpacing.md,
-  },
-  cameraPlaceholderSubtext: {
-    color: AppColors.disabled,
-    fontSize: 13,
-    marginTop: AppSpacing.xs,
+    fontSize: 14,
   },
   overlayTopLeft: {
     position: 'absolute',
@@ -167,6 +277,13 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: AppSpacing.md,
     right: AppSpacing.md,
+  },
+  overlayBottom: {
+    position: 'absolute',
+    bottom: AppSpacing.lg,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
   },
   sessionBadge: {
     flexDirection: 'row',
@@ -196,6 +313,84 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginLeft: AppSpacing.xs,
   },
+  guideFrame: {
+    position: 'absolute',
+    top: '15%',
+    left: '10%',
+    right: '10%',
+    bottom: '25%',
+  },
+  guideCorner: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+  },
+  guideTopLeft: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+  },
+  guideTopRight: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+  },
+  guideBottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+  },
+  guideBottomRight: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+  },
+  currentViewBadge: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: AppSpacing.lg,
+    paddingVertical: AppSpacing.sm,
+    borderRadius: AppBorderRadius.xl,
+  },
+  currentViewText: {
+    color: AppColors.surface,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: AppSpacing.xl,
+  },
+  permissionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: AppColors.onBackground,
+    marginTop: AppSpacing.lg,
+    marginBottom: AppSpacing.sm,
+  },
+  permissionText: {
+    fontSize: 14,
+    color: AppColors.onSurfaceVariant,
+    textAlign: 'center',
+    marginBottom: AppSpacing.lg,
+  },
+  permissionButton: {
+    backgroundColor: AppColors.primary,
+    paddingHorizontal: AppSpacing.xl,
+    paddingVertical: AppSpacing.md,
+    borderRadius: AppBorderRadius.xl,
+  },
+  permissionButtonText: {
+    color: AppColors.onPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
   controlsContainer: {
     backgroundColor: AppColors.surface,
     borderTopLeftRadius: AppBorderRadius.xl,
@@ -206,7 +401,7 @@ const styles = StyleSheet.create({
     ...AppShadow.heavy,
   },
   viewSelectorContainer: {
-    marginBottom: AppSpacing.lg,
+    marginBottom: AppSpacing.md,
   },
   sectionLabel: {
     fontSize: 14,
@@ -230,19 +425,19 @@ const styles = StyleSheet.create({
   },
   viewChipText: {
     color: AppColors.onSurface,
-    fontSize: 13,
+    fontSize: 12,
   },
   viewChipTextSelected: {
     color: AppColors.onPrimary,
   },
   captureArea: {
     alignItems: 'center',
-    paddingVertical: AppSpacing.md,
+    paddingVertical: AppSpacing.sm,
   },
   frameCounter: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: AppSpacing.md,
+    marginBottom: AppSpacing.sm,
   },
   frameCountText: {
     fontSize: 15,
@@ -266,6 +461,9 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.95 }],
     backgroundColor: AppColors.primaryDark,
   },
+  captureButtonDisabled: {
+    backgroundColor: AppColors.disabled,
+  },
   captureButtonInner: {
     width: 68,
     height: 68,
@@ -279,9 +477,9 @@ const styles = StyleSheet.create({
   captureHint: {
     fontSize: 13,
     color: AppColors.onSurfaceVariant,
-    marginTop: AppSpacing.md,
+    marginTop: AppSpacing.sm,
   },
   snackbar: {
-    backgroundColor: AppColors.primaryDark,
+    marginBottom: 100,
   },
 });

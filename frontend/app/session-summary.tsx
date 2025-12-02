@@ -1,8 +1,8 @@
 // VETRA Depth Recorder - Session Summary Screen
-// Display captured frames and session details
+// Display captured frames with real capture data
 
 import React from 'react';
-import { View, StyleSheet, ScrollView, FlatList } from 'react-native';
+import { View, StyleSheet, ScrollView, Image } from 'react-native';
 import { Text, Card, Button, Icon, Divider } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,23 +37,62 @@ interface FrameItemProps {
   index: number;
 }
 
-const FrameItem: React.FC<FrameItemProps> = ({ frame, index }) => (
-  <View style={styles.frameItem}>
-    <View style={styles.frameIndex}>
-      <Text style={styles.frameIndexText}>{index + 1}</Text>
+const FrameItem: React.FC<FrameItemProps> = ({ frame, index }) => {
+  const hasRealImage = frame.imagePath && !frame.isMock;
+  
+  return (
+    <View style={styles.frameItem}>
+      <View style={styles.frameIndex}>
+        <Text style={styles.frameIndexText}>{index + 1}</Text>
+      </View>
+      
+      {/* Thumbnail */}
+      <View style={styles.frameThumbnail}>
+        {hasRealImage ? (
+          <Image
+            source={{ uri: frame.imagePath || undefined }}
+            style={styles.thumbnailImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <Icon source="image" size={24} color={AppColors.placeholder} />
+        )}
+      </View>
+      
+      {/* Frame Info */}
+      <View style={styles.frameInfo}>
+        <Text style={styles.frameViewLabel}>{getViewLabelDisplay(frame.viewLabel)}</Text>
+        <Text style={styles.frameTimestamp}>{formatTime(frame.timestamp)}</Text>
+        <View style={styles.frameMetaRow}>
+          {frame.isMock ? (
+            <View style={styles.mockBadge}>
+              <Text style={styles.mockBadgeText}>Mock</Text>
+            </View>
+          ) : (
+            <View style={styles.realBadge}>
+              <Icon source="check" size={12} color={AppColors.success} />
+              <Text style={styles.realBadgeText}>Real</Text>
+            </View>
+          )}
+          {frame.imageWidth && frame.imageHeight && (
+            <Text style={styles.frameDimensions}>
+              {frame.imageWidth}x{frame.imageHeight}
+            </Text>
+          )}
+        </View>
+      </View>
+      
+      {/* Status Icon */}
+      <View style={styles.frameStatus}>
+        <Icon
+          source={frame.isMock ? 'alert-circle-outline' : 'check-circle'}
+          size={20}
+          color={frame.isMock ? AppColors.warning : AppColors.success}
+        />
+      </View>
     </View>
-    <View style={styles.frameThumbnail}>
-      <Icon source="image" size={24} color={AppColors.placeholder} />
-    </View>
-    <View style={styles.frameInfo}>
-      <Text style={styles.frameViewLabel}>{getViewLabelDisplay(frame.viewLabel)}</Text>
-      <Text style={styles.frameTimestamp}>{formatTime(frame.timestamp)}</Text>
-    </View>
-    <View style={styles.frameStatus}>
-      <Icon source="check-circle" size={20} color={AppColors.success} />
-    </View>
-  </View>
-);
+  );
+};
 
 export default function SessionSummaryScreen() {
   const router = useRouter();
@@ -78,13 +117,15 @@ export default function SessionSummaryScreen() {
   }
 
   const summary = getSessionSummary(currentSession);
+  const realFrames = currentSession.frames.filter(f => !f.isMock).length;
+  const mockFrames = currentSession.frames.filter(f => f.isMock).length;
 
   const handleBackToCapture = () => {
     router.back();
   };
 
-  const handleFinishSession = () => {
-    endSession();
+  const handleFinishSession = async () => {
+    await endSession();
     router.replace('/');
   };
 
@@ -98,7 +139,7 @@ export default function SessionSummaryScreen() {
               <Icon source="clipboard-check" size={28} color={AppColors.primary} />
               <Text style={styles.cardTitle}>Session Details</Text>
             </View>
-            
+
             <View style={styles.detailRow}>
               <View style={styles.detailItem}>
                 <Text style={styles.detailLabel}>Animal ID</Text>
@@ -110,6 +151,15 @@ export default function SessionSummaryScreen() {
                 <Text style={styles.detailLabel}>Created</Text>
                 <Text style={styles.detailValue}>
                   {formatDate(currentSession.createdAt)}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.detailRow}>
+              <View style={styles.detailItem}>
+                <Text style={styles.detailLabel}>Session ID</Text>
+                <Text style={styles.detailValueSmall} numberOfLines={1}>
+                  {currentSession.id}
                 </Text>
               </View>
             </View>
@@ -130,17 +180,23 @@ export default function SessionSummaryScreen() {
               <Icon source="chart-bar" size={28} color={AppColors.secondary} />
               <Text style={styles.cardTitle}>Capture Statistics</Text>
             </View>
-            
+
             <View style={styles.statsGrid}>
               <View style={styles.statItem}>
                 <Text style={styles.statNumber}>{summary.totalFrames}</Text>
                 <Text style={styles.statLabel}>Total Frames</Text>
               </View>
               <View style={styles.statItem}>
-                <Text style={styles.statNumber}>
-                  {Object.keys(summary.viewCounts).length}
+                <Text style={[styles.statNumber, { color: AppColors.success }]}>
+                  {realFrames}
                 </Text>
-                <Text style={styles.statLabel}>View Angles</Text>
+                <Text style={styles.statLabel}>Real Captures</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Text style={[styles.statNumber, { color: AppColors.warning }]}>
+                  {mockFrames}
+                </Text>
+                <Text style={styles.statLabel}>Mock Frames</Text>
               </View>
             </View>
 
@@ -171,7 +227,7 @@ export default function SessionSummaryScreen() {
               <Icon source="image-multiple" size={28} color={AppColors.primary} />
               <Text style={styles.cardTitle}>Captured Frames</Text>
             </View>
-            
+
             {currentSession.frames.length === 0 ? (
               <View style={styles.emptyFrames}>
                 <Icon source="camera-off" size={40} color={AppColors.placeholder} />
@@ -191,6 +247,29 @@ export default function SessionSummaryScreen() {
             )}
           </Card.Content>
         </Card>
+
+        {/* Data Location Info */}
+        {realFrames > 0 && (
+          <Card style={styles.card}>
+            <Card.Content>
+              <View style={styles.cardHeader}>
+                <Icon source="folder" size={28} color={AppColors.info} />
+                <Text style={styles.cardTitle}>Data Location</Text>
+              </View>
+              <Text style={styles.dataLocationText}>
+                Captured data is saved to the app's document directory under:
+              </Text>
+              <View style={styles.pathContainer}>
+                <Text style={styles.pathText}>
+                  VETRA_DATA/session_{currentSession.id}/
+                </Text>
+              </View>
+              <Text style={styles.dataFormatText}>
+                Each frame contains: rgb.jpg + meta.json
+              </Text>
+            </Card.Content>
+          </Card>
+        )}
       </ScrollView>
 
       {/* Bottom Buttons */}
@@ -213,7 +292,7 @@ export default function SessionSummaryScreen() {
           labelStyle={styles.finishButtonLabel}
           icon="check"
         >
-          Finish Session
+          Finish
         </Button>
       </View>
     </SafeAreaView>
@@ -265,6 +344,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: AppColors.onSurface,
   },
+  detailValueSmall: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: AppColors.onSurface,
+    fontFamily: 'monospace',
+  },
   notesContainer: {
     marginTop: AppSpacing.sm,
     padding: AppSpacing.md,
@@ -279,6 +364,7 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     marginBottom: AppSpacing.md,
+    gap: AppSpacing.sm,
   },
   statItem: {
     flex: 1,
@@ -286,17 +372,17 @@ const styles = StyleSheet.create({
     padding: AppSpacing.md,
     backgroundColor: AppColors.surfaceVariant,
     borderRadius: AppBorderRadius.md,
-    marginHorizontal: AppSpacing.xs,
   },
   statNumber: {
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: '700',
     color: AppColors.primary,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: AppColors.onSurfaceVariant,
     marginTop: AppSpacing.xs,
+    textAlign: 'center',
   },
   viewBreakdown: {
     marginTop: AppSpacing.sm,
@@ -368,6 +454,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: AppSpacing.md,
+    overflow: 'hidden',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
   },
   frameInfo: {
     flex: 1,
@@ -381,6 +472,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: AppColors.onSurfaceVariant,
     marginTop: 2,
+  },
+  frameMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    gap: AppSpacing.sm,
+  },
+  mockBadge: {
+    backgroundColor: AppColors.warning,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  mockBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: AppColors.onSecondary,
+  },
+  realBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  realBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: AppColors.success,
+    marginLeft: 2,
+  },
+  frameDimensions: {
+    fontSize: 10,
+    color: AppColors.onSurfaceVariant,
+    fontFamily: 'monospace',
   },
   frameStatus: {
     marginLeft: AppSpacing.sm,
@@ -412,6 +539,26 @@ const styles = StyleSheet.create({
   },
   emptyButton: {
     borderRadius: AppBorderRadius.xl,
+  },
+  dataLocationText: {
+    fontSize: 13,
+    color: AppColors.onSurfaceVariant,
+    marginBottom: AppSpacing.sm,
+  },
+  pathContainer: {
+    backgroundColor: AppColors.surfaceVariant,
+    padding: AppSpacing.sm,
+    borderRadius: AppBorderRadius.sm,
+    marginBottom: AppSpacing.sm,
+  },
+  pathText: {
+    fontSize: 12,
+    fontFamily: 'monospace',
+    color: AppColors.onSurface,
+  },
+  dataFormatText: {
+    fontSize: 12,
+    color: AppColors.onSurfaceVariant,
   },
   bottomContainer: {
     position: 'absolute',

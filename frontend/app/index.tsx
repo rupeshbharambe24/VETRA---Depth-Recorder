@@ -1,24 +1,30 @@
 // VETRA Depth Recorder - Device Check Screen
-// Entry point that checks device capabilities (mocked for now)
+// Entry point that checks device capabilities
 
-import React from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { Text, Card, Button, Icon } from 'react-native-paper';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSession } from '../src/context/SessionContext';
 import { AppColors, AppSpacing, AppBorderRadius, AppShadow } from '../src/theme/appTheme';
+
+type SupportStatus = 'checking' | 'supported' | 'partial' | 'unsupported';
 
 interface StatusItemProps {
   label: string;
-  status: 'unknown' | 'supported' | 'unsupported';
+  status: SupportStatus;
   icon: string;
+  detail?: string;
 }
 
-const StatusItem: React.FC<StatusItemProps> = ({ label, status, icon }) => {
+const StatusItem: React.FC<StatusItemProps> = ({ label, status, icon, detail }) => {
   const getStatusColor = () => {
     switch (status) {
       case 'supported':
         return AppColors.success;
+      case 'partial':
+        return AppColors.warning;
       case 'unsupported':
         return AppColors.error;
       default:
@@ -29,11 +35,26 @@ const StatusItem: React.FC<StatusItemProps> = ({ label, status, icon }) => {
   const getStatusText = () => {
     switch (status) {
       case 'supported':
-        return 'Supported';
+        return 'Available';
+      case 'partial':
+        return 'Partial Support';
       case 'unsupported':
-        return 'Not Supported';
+        return 'Not Available';
       default:
-        return 'Unknown (will be checked later)';
+        return 'Checking...';
+    }
+  };
+
+  const getStatusIcon = () => {
+    switch (status) {
+      case 'supported':
+        return 'check-circle';
+      case 'partial':
+        return 'alert-circle';
+      case 'unsupported':
+        return 'close-circle';
+      default:
+        return 'progress-clock';
     }
   };
 
@@ -44,9 +65,17 @@ const StatusItem: React.FC<StatusItemProps> = ({ label, status, icon }) => {
       </View>
       <View style={styles.statusTextContainer}>
         <Text style={styles.statusLabel}>{label}</Text>
-        <Text style={[styles.statusValue, { color: getStatusColor() }]}>
-          {getStatusText()}
-        </Text>
+        <View style={styles.statusRow}>
+          {status === 'checking' ? (
+            <ActivityIndicator size="small" color={AppColors.primary} />
+          ) : (
+            <Icon source={getStatusIcon()} size={16} color={getStatusColor()} />
+          )}
+          <Text style={[styles.statusValue, { color: getStatusColor() }]}>
+            {getStatusText()}
+          </Text>
+        </View>
+        {detail && <Text style={styles.statusDetail}>{detail}</Text>}
       </View>
     </View>
   );
@@ -54,10 +83,39 @@ const StatusItem: React.FC<StatusItemProps> = ({ label, status, icon }) => {
 
 export default function DeviceCheckScreen() {
   const router = useRouter();
+  const { checkDeviceSupport, supportInfo } = useSession();
+  
+  const [cameraStatus, setCameraStatus] = useState<SupportStatus>('checking');
+  const [sensorStatus, setSensorStatus] = useState<SupportStatus>('checking');
+  const [depthStatus, setDepthStatus] = useState<SupportStatus>('checking');
+  const [statusMessage, setStatusMessage] = useState('');
+
+  useEffect(() => {
+    const checkSupport = async () => {
+      try {
+        const info = await checkDeviceSupport();
+        
+        setCameraStatus(info.cameraAvailable ? 'supported' : 'unsupported');
+        setSensorStatus(info.sensorsAvailable ? 'supported' : 'partial');
+        setDepthStatus(info.depthSupported ? 'supported' : 'partial');
+        setStatusMessage(info.message);
+      } catch (error) {
+        setCameraStatus('unsupported');
+        setSensorStatus('unsupported');
+        setDepthStatus('unsupported');
+        setStatusMessage('Failed to check device capabilities');
+      }
+    };
+
+    checkSupport();
+  }, [checkDeviceSupport]);
 
   const handleContinue = () => {
     router.push('/session-setup');
   };
+
+  const isReady = cameraStatus !== 'checking' && sensorStatus !== 'checking';
+  const canProceed = cameraStatus === 'supported';
 
   return (
     <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -69,7 +127,7 @@ export default function DeviceCheckScreen() {
           </View>
           <Text style={styles.appTitle}>VETRA Depth Recorder</Text>
           <Text style={styles.appSubtitle}>
-            Capture ARCore RGB + Depth frames for 3D reconstruction
+            Capture RGB + Depth frames for 3D reconstruction
           </Text>
         </View>
 
@@ -78,29 +136,38 @@ export default function DeviceCheckScreen() {
           <Card.Content>
             <Text style={styles.cardTitle}>Device Capabilities</Text>
             <Text style={styles.cardDescription}>
-              Checking your device's compatibility with ARCore depth capture.
+              Checking your device's compatibility with capture features.
             </Text>
-            
+
             <View style={styles.statusList}>
               <StatusItem
-                label="ARCore Support"
-                status="unknown"
-                icon="augmented-reality"
+                label="Camera"
+                status={cameraStatus}
+                icon="camera"
+                detail="Required for RGB capture"
               />
               <View style={styles.divider} />
               <StatusItem
-                label="Depth API Support"
-                status="unknown"
+                label="Motion Sensors"
+                status={sensorStatus}
+                icon="axis-arrow"
+                detail="Used for pose estimation"
+              />
+              <View style={styles.divider} />
+              <StatusItem
+                label="Depth Capture"
+                status={depthStatus}
                 icon="axis-z-arrow"
+                detail="Simulated (requires ARCore native)"
               />
             </View>
 
-            <View style={styles.noteContainer}>
-              <Icon source="information" size={20} color={AppColors.info} />
-              <Text style={styles.noteText}>
-                Device capabilities will be verified when ARCore integration is enabled in a future update.
-              </Text>
-            </View>
+            {statusMessage && (
+              <View style={styles.noteContainer}>
+                <Icon source="information" size={20} color={AppColors.info} />
+                <Text style={styles.noteText}>{statusMessage}</Text>
+              </View>
+            )}
           </Card.Content>
         </Card>
 
@@ -113,19 +180,49 @@ export default function DeviceCheckScreen() {
                 <View style={styles.instructionNumber}>
                   <Text style={styles.instructionNumberText}>1</Text>
                 </View>
-                <Text style={styles.instructionText}>Create a new capture session</Text>
+                <View style={styles.instructionContent}>
+                  <Text style={styles.instructionTitle}>Create Session</Text>
+                  <Text style={styles.instructionText}>Add animal ID and notes</Text>
+                </View>
               </View>
               <View style={styles.instructionItem}>
                 <View style={styles.instructionNumber}>
                   <Text style={styles.instructionNumberText}>2</Text>
                 </View>
-                <Text style={styles.instructionText}>Select view angle and capture frames</Text>
+                <View style={styles.instructionContent}>
+                  <Text style={styles.instructionTitle}>Capture Frames</Text>
+                  <Text style={styles.instructionText}>Select angles and take photos</Text>
+                </View>
               </View>
               <View style={styles.instructionItem}>
                 <View style={styles.instructionNumber}>
                   <Text style={styles.instructionNumberText}>3</Text>
                 </View>
-                <Text style={styles.instructionText}>Review and export session data</Text>
+                <View style={styles.instructionContent}>
+                  <Text style={styles.instructionTitle}>Export Data</Text>
+                  <Text style={styles.instructionText}>RGB + pose metadata saved</Text>
+                </View>
+              </View>
+            </View>
+          </Card.Content>
+        </Card>
+
+        {/* Data Format Info */}
+        <Card style={styles.card}>
+          <Card.Content>
+            <Text style={styles.cardTitle}>Output Format</Text>
+            <View style={styles.formatList}>
+              <View style={styles.formatItem}>
+                <Icon source="image" size={20} color={AppColors.primary} />
+                <Text style={styles.formatText}>RGB images (JPEG)</Text>
+              </View>
+              <View style={styles.formatItem}>
+                <Icon source="code-json" size={20} color={AppColors.primary} />
+                <Text style={styles.formatText}>Metadata JSON (pose, intrinsics)</Text>
+              </View>
+              <View style={styles.formatItem}>
+                <Icon source="folder" size={20} color={AppColors.primary} />
+                <Text style={styles.formatText}>Organized by session/frame</Text>
               </View>
             </View>
           </Card.Content>
@@ -141,8 +238,10 @@ export default function DeviceCheckScreen() {
           contentStyle={styles.buttonContent}
           labelStyle={styles.buttonLabel}
           icon="arrow-right"
+          disabled={!isReady || !canProceed}
+          loading={!isReady}
         >
-          Continue
+          {isReady ? 'Continue' : 'Checking...'}
         </Button>
       </View>
     </SafeAreaView>
@@ -160,7 +259,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    paddingVertical: AppSpacing.xl,
+    paddingVertical: AppSpacing.lg,
   },
   logoContainer: {
     width: 100,
@@ -208,7 +307,7 @@ const styles = StyleSheet.create({
   },
   statusItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingVertical: AppSpacing.sm,
   },
   statusIconContainer: {
@@ -228,8 +327,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: AppColors.onSurface,
   },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
   statusValue: {
     fontSize: 13,
+    marginLeft: 4,
+  },
+  statusDetail: {
+    fontSize: 12,
+    color: AppColors.onSurfaceVariant,
     marginTop: 2,
   },
   divider: {
@@ -257,7 +366,7 @@ const styles = StyleSheet.create({
   },
   instructionItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: AppSpacing.md,
   },
   instructionNumber: {
@@ -274,10 +383,31 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
   },
-  instructionText: {
+  instructionContent: {
     flex: 1,
+  },
+  instructionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: AppColors.onSurface,
+  },
+  instructionText: {
+    fontSize: 13,
+    color: AppColors.onSurfaceVariant,
+    marginTop: 2,
+  },
+  formatList: {
+    marginTop: AppSpacing.sm,
+  },
+  formatItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: AppSpacing.sm,
+  },
+  formatText: {
     fontSize: 14,
     color: AppColors.onSurface,
+    marginLeft: AppSpacing.sm,
   },
   bottomContainer: {
     position: 'absolute',
