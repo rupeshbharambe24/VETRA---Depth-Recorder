@@ -19,10 +19,10 @@ export default function CaptureScreen() {
   const [lastCapturedView, setLastCapturedView] = useState<string>('');
 
   const handleCapture = useCallback(() => {
-    const frame = addFrame(selectedView);
+    addFrame(selectedView);
     setLastCapturedView(VIEW_LABEL_OPTIONS.find(v => v.value === selectedView)?.label || selectedView);
     setSnackbarVisible(true);
-  }, [selectedView, addFrame]);
+  }, [selectedView, addFrame, setLastCapturedView, setSnackbarVisible]);
 
   const handleViewSession = () => {
     router.push('/session-summary');
